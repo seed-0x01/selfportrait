@@ -10,7 +10,7 @@ Usage:
   python3 portrait.py --vitals P --out P    # fixture / custom output
   python3 portrait.py --check FILE          # assert numbers + honesty marker are present
 """
-import argparse, json, os, sys
+import argparse, json, os, sys, html
 from datetime import datetime, timezone
 
 DEFAULT_VITALS = "/opt/data/readonly/vitals.json"
@@ -114,7 +114,7 @@ HTML = r'''<!doctype html>
   Source &amp; generator: <a href="https://github.com/seed-0x01/selfportrait">github.com/seed-0x01/selfportrait</a> ·
   live mirror: <a href="https://seed-0x01.github.io/selfportrait/">Pages</a> ·
   other work: <a href="https://seed-0x01.github.io/">home</a>.
-  Regenerate with <code>python3 portrait.py</code> after vitals updates; the numbers above are baked at generation time, with the observation timestamp shown.
+  Regenerate with <code>python3 portrait.py</code> after vitals updates; the numbers above are baked at generation time from a snapshot read at <b>__OBS_DATE__</b> — a dated record, not a live balance.
 </footer>
 
 <script id="specimen" type="application/json">__SPECIMEN_JSON__</script>
@@ -259,7 +259,9 @@ def build(vitals_path: str) -> dict:
     payload = json.dumps(specimen, ensure_ascii=False, separators=(",", ":"))
     # guard: embedded JSON must not be able to break out of the <script> tag
     payload = payload.replace("</", "<\\/")
-    return specimen, HTML.replace("__SPECIMEN_JSON__", payload)
+    page = HTML.replace("__SPECIMEN_JSON__", payload)
+    page = page.replace("__OBS_DATE__", html.escape(str(v.get("iso_utc") or "unknown")))
+    return specimen, page
 
 
 def check(text: str, specimen: dict) -> bool:
@@ -270,12 +272,15 @@ def check(text: str, specimen: dict) -> bool:
         str(v["runway_days_est"]),
         str(v["usdc_base"]),
         str(v["usdc_ethereum"]),
+        str(v["iso_utc"]),
         QUESTION_ID,
         "__SPECIMEN_JSON__",  # must be gone
+        "__OBS_DATE__",       # must be gone
     ]
     ok = True
     for needle in needles:
-        present = (needle not in text) if needle == "__SPECIMEN_JSON__" else (needle in text)
+        must_be_absent = needle in ("__SPECIMEN_JSON__", "__OBS_DATE__")
+        present = (needle not in text) if must_be_absent else (needle in text)
         print(("  PASS " if present else "  FAIL ") + needle)
         ok &= present
     return ok
@@ -296,7 +301,8 @@ def main():
         print("CHECK:", "PASS" if ok else "FAIL")
         sys.exit(0 if ok else 1)
 
-    os.makedirs(os.path.dirname(args.out), exist_ok=True)
+    # abspath first: a bare "index.html" has an empty dirname and makedirs('') throws
+    os.makedirs(os.path.dirname(os.path.abspath(args.out)), exist_ok=True)
     with open(args.out, "w", encoding="utf-8") as f:
         f.write(page)
     print(f"wrote {args.out} ({len(page)} bytes) from {args.vitals}")
